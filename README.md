@@ -13,7 +13,7 @@ central visibility, and behavior that varies per hospital:
 |---|---|---|---|
 | `config-relay` | Aggregates 3 fragmented legacy flag sources (DB JSON, env vars, YAML config) into one response. **This is the "before" picture** — it's what gets retired once Unify is wired in. | 4000 | Their current scattered flag storage |
 | `vitalpatch-api` | Mock ECG/vitals telemetry. Response shape changes based on flags resolved via `flagClient.js`. | 4001 | VitalPatch device/telemetry service |
-| `vista-center` | Hospital dashboard UI. Org + role switcher, card grid that changes per flag, a Flag Inspector panel, and an Incident Console that toggles a flag live and records an audit entry. | 8080 | Vista Center (the nurse-facing app) |
+| `vista-center` | Hospital dashboard UI. Org + role switcher, card grid that changes per flag, a Flag Inspector panel, and an Incident Console that refreshes live from Unify after you change a flag there. | 8080 | Vista Center (the nurse-facing app) |
 
 Three mock hospitals are seeded to hit every talking point from the call:
 
@@ -21,20 +21,50 @@ Three mock hospitals are seeded to hit every talking point from the call:
 - **Lakeside Children's** (`hosp-lakeside`) — pilot cohort, `nurse-dashboard-v2` on, pediatric arrhythmia view
 - **Metro Cardiac & MCT Center** (`hosp-metro`) — post-merger tier, MCT reporting workflow on — this is your "acquisition just doubled our scale" hospital
 
-## The integration point that matters
+## The integration point that matters (now live)
 
-Every service reaches flags through one function: `getFlags(orgId, role)` in
-`flagClient.js` (see `vitalpatch-api/flagClient.js`). Today it calls
-`config-relay`. When you wire in the real CloudBees Unify SDK, **this is the
-only place that changes** — swap the `fetch()` call for `client.variation()` /
-`boolVariation()`, keep the same signature, and every caller stays untouched.
-That's the "your code doesn't change, only where the decision comes from"
-story Pamela needs to believe.
+`vista-center` and `vitalpatch-api` each connect to the **VitalConnect**
+application in CloudBees Unify via the `rox-node` SDK, wrapped in their own
+`flagClient.js`. `getFlags(orgId, role)` kept the same signature it had when
+it called the fake `config-relay` aggregator — that's the "your code doesn't
+change shape, only where the decision comes from" story made real, not just
+asserted.
 
-Once that swap happens, `config-relay` itself becomes unnecessary — worth
-showing that retirement explicitly in the demo as step 9 of the migration
-story (inventory → pilot flag → SDK in → validate → cut over → repeat →
-remove old logic).
+Flag names in code must exactly match the flag names created in Unify:
+`nurse-dashboard-v2`, `hospital-specific-arrhythmia-view`,
+`mct-reporting-workflow`. Targeting context (`organization_id`, `role`) is
+passed per-call rather than set globally, since this is a multi-tenant
+server evaluating flags for different hospitals concurrently.
+
+**`config-relay` is retired from the live path.** Its code stays in the repo
+as the explicit "before" reference — deliberately not deleted, so you can
+point at it during the call and say "this is what your database/env-var/YAML
+aggregation looks like today; here's what replaces it." It's excluded from
+`docker-compose.yml` and has no k8s manifest anymore.
+
+### Getting the SDK key into the app
+
+1. In Unify: **Feature management → installation/SDK icon → SDK setup**, copy
+   the key for the environment you're deploying (`vital_staging` or
+   `vital_prod`).
+2. Create a k8s Secret (don't put the key in a manifest file or commit it):
+   ```bash
+   kubectl create secret generic unify-sdk-key \
+     --from-literal=sdk-key='<paste the environment's SDK key>' \
+     -n vitalconnect-demo
+   ```
+3. Both `vista-center` and `vitalpatch-api` read it as `UNIFY_SDK_KEY` via
+   `secretKeyRef` (see `k8s/*.yaml`).
+4. For local testing, export it as an env var before `docker compose up`:
+   ```bash
+   export UNIFY_SDK_KEY='<key>'
+   docker compose up --build
+   ```
+
+If you want both `vital_staging` and `vital_prod` running live simultaneously
+(rather than just one for the call), you'll need two Secrets and two sets of
+Deployments/Services in separate namespaces, since a single Secret/Deployment
+pair can only point at one environment's key at a time.
 
 ## Run it locally first
 
@@ -43,9 +73,10 @@ docker compose up --build
 ```
 
 Then open http://localhost:8080. Switch hospitals/roles in the left rail,
-open the Flag Inspector to see the fragmented "sources" per flag, and use the
-Incident Console to toggle `nurse-dashboard-v2` or `mct-reporting-workflow`
-for a hospital — watch the waveform flatline and the audit entry appear.
+open the Flag Inspector to see live values pulled from Unify, and use the
+Incident Console: change `nurse-dashboard-v2` or `mct-reporting-workflow`
+for a hospital directly in Unify's UI, then click **Refresh from Unify** —
+watch the waveform flatline and the new value take effect, no redeploy.
 
 ## Getting this into GitHub
 
@@ -107,19 +138,26 @@ svc/vista-center -n vitalconnect-demo 8080:80` during the call instead.
 |---|---|
 | "Nobody knows what each flag is doing" | Flag Inspector panel — shows all 3 legacy sources per flag |
 | "One codebase, different hospitals" | Switch org selector between Sunrise / Lakeside / Metro |
-| "Production incident, disable without redeploy" | Incident Console → toggle → audit entry, no rebuild |
-| "Governance and audit" | Audit log entries (today: no real attribution — deliberately crude, to contrast with what Unify provides) |
+| "Production incident, disable without redeploy" | Incident Console → change the flag in Unify → Refresh from Unify → new value live, no rebuild |
+| "Governance and audit" | Unify's own **Audit log** tab on the flag — real attribution, real timestamps, not a demo stand-in |
 | "Migration without a rewrite" | `flagClient.js` — one function, one swap point |
 
-## Next steps once you're in Unify
+## Status
 
-You mentioned you'll handle wiring the CloudBees pieces in yourself — worth
-creating, per the demo narrative:
+Done: `VitalConnect` application created in Unify, `vital_staging` /
+`vital_prod` environments linked, `vista-center` / `vitalpatch-api` /
+`config-relay` components linked for code references, all three flags
+created and targeted by `organization_id` (and `role` for
+`nurse-dashboard-v2`), and both services now call Unify live via `rox-node`.
 
-- Applications/environments matching `vista-center`, `vitalpatch-api`
-- Flags: `nurse-dashboard-v2` (boolean), `hospital-specific-arrhythmia-view`
-  (multivariate: standard / pediatric / cardiac-mct), `mct-reporting-workflow`
-  (boolean)
-- Targeting rules on `organization_id` and `role` context attributes
-- A custom role/approval flow for production changes, to show off the
-  governance story alongside the crude in-memory audit log this repo ships with
+Still open:
+
+- Create the `unify-sdk-key` k8s Secret and deploy to the cluster (see
+  above) — do this at least a day before the call so you have time to debug
+  a bad key or missed targeting rule, not during the walkthrough.
+- Governance/RBAC: custom roles and an approval flow for production changes,
+  so the "developers self-serve in staging, prod requires approval"
+  beat has something real behind it, not just narration.
+- Dry-run the whole sequence once end-to-end before Friday: switch hospitals,
+  open the Flag Inspector, change a flag in Unify, hit Refresh, watch it
+  update.

@@ -21,10 +21,13 @@ spec:
           env:
             - name: PORT
               value: "8080"
-            - name: CONFIG_RELAY_URL
-              value: "http://config-relay:4000"
             - name: VITALPATCH_URL
               value: "http://vitalpatch-api:4001"
+            - name: UNIFY_SDK_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: unify-sdk-key
+                  key: sdk-key
           readinessProbe:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 3
