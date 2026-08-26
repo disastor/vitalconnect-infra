@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vitalpatch-api
+  namespace: vitalconnect-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vitalpatch-api
+  template:
+    metadata:
+      labels:
+        app: vitalpatch-api
+    spec:
+      containers:
+        - name: vitalpatch-api
+          image: REGION-docker.pkg.dev/PROJECT_ID/vitalconnect-demo/vitalpatch-api:latest
+          ports:
+            - containerPort: 4001
+          env:
+            - name: PORT
+              value: "4001"
+            - name: CONFIG_RELAY_URL
+              value: "http://config-relay:4000"
+          readinessProbe:
+            httpGet: { path: /health, port: 4001 }
+            initialDelaySeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vitalpatch-api
+  namespace: vitalconnect-demo
+spec:
+  selector:
+    app: vitalpatch-api
+  ports:
+    - port: 4001
+      targetPort: 4001
+  type: ClusterIP

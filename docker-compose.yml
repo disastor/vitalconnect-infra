@@ -1,0 +1,20 @@
+version: "3.9"
+services:
+  config-relay:
+    build: ./config-relay
+    ports: ["4000:4000"]
+
+  vitalpatch-api:
+    build: ./vitalpatch-api
+    ports: ["4001:4001"]
+    environment:
+      - CONFIG_RELAY_URL=http://config-relay:4000
+    depends_on: [config-relay]
+
+  vista-center:
+    build: ./vista-center
+    ports: ["8080:8080"]
+    environment:
+      - CONFIG_RELAY_URL=http://config-relay:4000
+      - VITALPATCH_URL=http://vitalpatch-api:4001
+    depends_on: [config-relay, vitalpatch-api]
