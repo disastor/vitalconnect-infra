@@ -1,19 +1,40 @@
-version: "3.9"
-# config-relay is intentionally not run here anymore -- vista-center and
-# vitalpatch-api now talk to CloudBees Unify directly via rox-node. Its
-# code/Dockerfile is kept in the repo as the "before" reference for the
-# demo, but it's no longer part of the live path.
+# Run this from inside vitalconnect-infra, with vista-center and
+# vitalpatch-api cloned as SIBLING folders (not inside this repo).
+#
+# Runs TWO full copies of the app simultaneously -- one pinned to
+# vital_staging, one to vital_prod -- so you can have both open in
+# separate browser tabs during the demo:
+#   http://localhost:8080  -> staging
+#   http://localhost:8090  -> prod
+#
+# Requires two env vars set before `docker compose up`:
+#   export UNIFY_SDK_KEY_STAGING='...'
+#   export UNIFY_SDK_KEY_PROD='...'
 services:
-  vitalpatch-api:
-    build: ./vitalpatch-api
+  vitalpatch-api-staging:
+    build: ../vitalpatch-api
     ports: ["4001:4001"]
     environment:
-      - UNIFY_SDK_KEY=${UNIFY_SDK_KEY}
+      - UNIFY_SDK_KEY=${UNIFY_SDK_KEY_STAGING}
 
-  vista-center:
-    build: ./vista-center
+  vista-center-staging:
+    build: ../vista-center
     ports: ["8080:8080"]
     environment:
-      - UNIFY_SDK_KEY=${UNIFY_SDK_KEY}
-      - VITALPATCH_URL=http://vitalpatch-api:4001
-    depends_on: [vitalpatch-api]
+      - UNIFY_SDK_KEY=${UNIFY_SDK_KEY_STAGING}
+      - VITALPATCH_URL=http://vitalpatch-api-staging:4001
+    depends_on: [vitalpatch-api-staging]
+
+  vitalpatch-api-prod:
+    build: ../vitalpatch-api
+    ports: ["4011:4001"]
+    environment:
+      - UNIFY_SDK_KEY=${UNIFY_SDK_KEY_PROD}
+
+  vista-center-prod:
+    build: ../vista-center
+    ports: ["8090:8080"]
+    environment:
+      - UNIFY_SDK_KEY=${UNIFY_SDK_KEY_PROD}
+      - VITALPATCH_URL=http://vitalpatch-api-prod:4001
+    depends_on: [vitalpatch-api-prod]
